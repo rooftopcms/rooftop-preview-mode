@@ -11,9 +11,9 @@ Text Domain: justified-preview-mode
 
 function set_preview_mode(){
     if(array_key_exists('HTTP_PREVIEW', $_SERVER)){
-        define("PREVIEW_MODE", $_SERVER['HTTP_PREVIEW']=="true" ? true : false);
+        define("JUSTIFIED_PREVIEW_MODE", $_SERVER['HTTP_PREVIEW']=="true" ? true : false);
     }else {
-        define("PREVIEW_MODE", false);
+        define("JUSTIFIED_PREVIEW_MODE", false);
     }
 }
 add_action('init', 'set_preview_mode');
