@@ -16,6 +16,6 @@ function set_preview_mode(){
         define("JUSTIFIED_PREVIEW_MODE", false);
     }
 }
-add_action('init', 'set_preview_mode');
+add_action('plugins_loaded', 'set_preview_mode');
 
 ?>
