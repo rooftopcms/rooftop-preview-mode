@@ -9,22 +9,25 @@ Plugin URI: http://errorstudio.co.uk
 Text Domain: justified-preview-mode
 */
 
-function set_preview_mode(){
+/**
+ * If we have a HTTP_PREVIEW (preview: true) then we should set the global const JUSTIFIED_PREVIEW_MODE to true.
+ *
+ * We use this
+ */
+add_action('plugins_loaded', function(){
     if(array_key_exists('HTTP_PREVIEW', $_SERVER)){
         define("JUSTIFIED_PREVIEW_MODE", $_SERVER['HTTP_PREVIEW']=="true" ? true : false);
     }else {
         define("JUSTIFIED_PREVIEW_MODE", false);
     }
-}
-add_action('plugins_loaded', 'set_preview_mode');
+});
 
+/**
+ * if the post in in anything but a published state, and we're NOT in preview mode,
+ * we should send back a response which mimics the WP_Error auth failed response
+ */
 add_action('rest_prepare_post', function($response){
     global $post;
-
-    /*
-     * if the post in in anything but a published state, and we're NOT in preview mode,
-     * we should send back a response which mimics the WP_Error auth failed response
-     */
 
     if($post->post_status != 'publish' && !JUSTIFIED_PREVIEW_MODE){
         $response = new Custom_WP_Error('unauthorized', 'Authentication failed', array('status'=>403));
@@ -32,6 +35,7 @@ add_action('rest_prepare_post', function($response){
 
     return $response;
 });
+
 
 /*
  * WP_REST_Posts_Controller is expecting a response object with a 'link_header' function, but in the case of
