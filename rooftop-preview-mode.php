@@ -41,7 +41,7 @@ add_action('rest_prepare_post', function($response){
 /*
  * WP_REST_Posts_Controller is expecting a response object with a 'link_header' method, but in the case of
  * rendering an unpublished post when not in preview mode, we need to return a WP_Error, which we sub-class here
- * and stubb the link_header method ourselves
+ * and stub the link_header method ourselves
  */
 class Custom_WP_Error extends WP_Error {
     public $data;
