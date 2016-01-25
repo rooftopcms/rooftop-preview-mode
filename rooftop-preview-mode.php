@@ -24,19 +24,24 @@ add_action('muplugins_loaded', function(){
 });
 
 /**
- * if the post in in anything but a published state, and we're NOT in preview mode,
+ * if any of the post types are in anything but a published state and we're NOT in preview mode,
  * we should send back a response which mimics the WP_Error auth failed response
  */
-add_action('rest_prepare_post', function($response){
-    global $post;
+add_action( 'rest_api_init', function() {
+    $types = get_post_types( array( 'public' => true ) );
 
-    if($post->post_status != 'publish' && !ROOFTOP_PREVIEW_MODE){
-        $response = new Custom_WP_Error('unauthorized', 'Authentication failed', array('status'=>403));
+    foreach( $types as $key => $type ) {
+        add_action( "rest_prepare_$type", function( $response ) {
+            global $post;
+
+            if( $post->post_status != 'publish' && !ROOFTOP_PREVIEW_MODE ) {
+                $response = new Custom_WP_Error( 'unauthorized', 'Authentication failed', array( 'status'=>403 ) );
+            }
+
+            return $response;
+        });
     }
-
-    return $response;
-});
-
+}, 10, 1);
 
 /*
  * WP_REST_Posts_Controller is expecting a response object with a 'link_header' method, but in the case of
