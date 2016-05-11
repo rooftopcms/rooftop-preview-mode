@@ -10,16 +10,24 @@ Text Domain: rooftop-preview-mode
 */
 
 /**
- * If we have a HTTP_PREVIEW (preview: true) then we should set the global const ROOFTOP_PREVIEW_MODE to true.
+ * If we have a HTTP_PREVIEW (preview: true) then we should set the global const ROOFTOP_INCLUDE_DRAFTS to true.
  *
  * We use this
  */
 
 add_action('muplugins_loaded', function(){
-    if( array_key_exists( 'HTTP_PREVIEW', $_SERVER ) ) {
-        define( "ROOFTOP_PREVIEW_MODE", $_SERVER['HTTP_PREVIEW']=="true" ? true : false );
+    if( array_key_exists( 'HTTP_PREVIEW', $_SERVER ) || array_key_exists( 'HTTP_INCLUDE_DRAFTS', $_SERVER ) ) {
+        define( "ROOFTOP_INCLUDE_DRAFTS", ( @$_SERVER['HTTP_PREVIEW']=="true" || @$_SERVER['HTTP_INCLUDE_DRAFTS']=="true" ) ? true : false );
     }else {
-        define( "ROOFTOP_PREVIEW_MODE", false );
+        define( "ROOFTOP_INCLUDE_DRAFTS", false );
+    }
+});
+
+add_filter( 'rooftop_published_statuses', function() {
+    if( ROOFTOP_INCLUDE_DRAFTS ) {
+        return array( 'publish', 'draft', 'scheduled', 'pending' );
+    }else {
+        return array( 'publish' );
     }
 });
 
@@ -31,65 +39,85 @@ add_action('muplugins_loaded', function(){
  */
 
 add_action( 'rest_api_init', function() {
-    $types = get_post_types( array( 'public' => true ) );
 
-    add_filter( 'rooftop_published_statuses', function() {
-        if( ROOFTOP_PREVIEW_MODE ) {
-            return array( 'publish', 'draft', 'scheduled', 'pending' );
-        }else {
-            return array( 'publish' );
-        }
-    });
+    $types = get_post_types( array( 'public' => true, 'show_in_rest' => true ) );
 
     foreach( $types as $key => $type ) {
         add_action( "rest_prepare_$type", function( $response ) {
             global $post;
 
-            $valid_post_statuses = apply_filters( 'rooftop_published_statuses', array() );
-
-            if( !ROOFTOP_PREVIEW_MODE ) {
-                if( !in_array( $post->post_status, $valid_post_statuses ) ) {
-                    $response = new Custom_WP_Error( 'unauthorized', 'Authentication failed', array( 'status'=>403 ) );
-                }
-            }else {
-                /**
-                 * If we're showing a preview version, then we need to access the appropriate revision of the current post
-                 */
-                $show_preview = isset($_SERVER['HTTP_PREVIEW_ID']);
-
-                /**
-                 * if we have a preparing_preview global, then we've already come through here and called
-                 * rest_prepare_$type we can skip over this and return our response, as it will be the response that
-                 * corresponds to the post we get back from wp_get_post_autosave( $post->ID );
-                 */
-                $previewing = isset($GLOBALS['preparing_preview']) ? $GLOBALS['preparing_preview'] : null;
-
-                if( $show_preview && !$previewing ) {
-//                    $preview = wp_get_post_autosave( $post->ID );
-//
-//                    if( ! $preview ) {
-//                        return $response;
-//                    }
-//
-//                    $method = "GET";
-//                    $route  = "/wp/v2/pages/{$preview->ID}";
-//
-//                    $preview_request = new WP_REST_Request($method, $route);
-//                    $preview_data = prepare_item_for_response( $preview, $post->post_type, $preview_request );
-//                    $preview_response = rest_ensure_response( $preview_data );
-//
-//                    return $preview_response;
-                }
+            if( $post->post_status != 'publish' && !ROOFTOP_INCLUDE_DRAFTS ) {
+                $response = new Custom_WP_Error( 'unauthorized', 'Authentication failed', array( 'status'=>403 ) );
             }
-
             return $response;
         });
     }
 }, 10, 1);
 
-function prepare_item_for_response( $preview_post, $type, $preview_request ) {
-    $GLOBALS['preparing_preview'] = $preview_post->ID;
+add_action( 'rest_api_init', function( $server ) {
+    global $_wp_post_type_features;
 
+    $post_types = get_post_types( array( 'public' => true, 'show_in_rest' => true ) );
+    $types_with_revisons = array_filter( $post_types, function( $type ) use ( $_wp_post_type_features ) {
+        $type_exists = isset( $_wp_post_type_features[$type] );
+        $type_has_revisions_capability = ( $type_exists && @$_wp_post_type_features[$type]['revisions'] == true );
+
+        $supports_revisions = $type_exists && $type_has_revisions_capability;
+
+        return $supports_revisions;
+    } );
+    $routes = $server->get_routes();
+
+    foreach( $types_with_revisons as $type ) {
+        array_filter( array_keys( $routes ), function( $route ) use ( $type, $routes ) {
+            $pluralized_type = "${type}s";
+
+            if( preg_match( "/\/${pluralized_type}$/", $route, $matches ) ) {
+                $rest_base     = preg_replace( "/\/${pluralized_type}$/", "", $route );
+                $rest_base     = preg_replace( "/^\//", "", $rest_base );
+
+                $preview_route = "/${pluralized_type}/(?P<parent_id>[\d]+)/preview";
+
+                register_rest_route( $rest_base, $preview_route, array(
+                    array(
+                        'methods'             => WP_REST_Server::READABLE,
+                        'callback'            => 'get_preview_version',
+                        'permission_callback' => 'check_preview_permission'
+                    )
+                ) );
+            }
+        } );
+    }
+}, 20, 1);
+
+
+function get_preview_version( $request ) {
+    global $post;
+
+    $id = $request['parent_id'];
+    $post = get_post( $id );
+
+    $preview = wp_get_post_autosave( $post->ID );
+
+    if( $preview ) {
+        $method = "GET";
+        $route  = $request->get_route();
+
+        $preview_request = new WP_REST_Request($method, $route);
+        $preview_data = prepare_item_for_response( $preview, $post->post_type, $preview_request );
+        $preview_response = rest_ensure_response( $preview_data );
+
+        return $preview_response;
+    }else {
+        return new Custom_WP_Error( 'rest_no_route', 'This post has no revisions available to preview', array( 'status' => 404 ) );
+    }
+}
+
+function check_preview_permission() {
+    return true;
+}
+
+function prepare_item_for_response( $preview_post, $type, $preview_request ) {
     setup_postdata( $preview_post );
 
     // Base fields for every post.
